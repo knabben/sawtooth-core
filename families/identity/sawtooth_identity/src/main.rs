@@ -30,6 +30,7 @@ cfg_if! {
         extern crate log4rs;
         extern crate rustc_serialize;
         extern crate sawtooth_sdk;
+        extern crate opentelemetry;
         use log::LevelFilter;
         use log4rs::append::console::ConsoleAppender;
         use log4rs::config::{Appender, Config, Root};
@@ -37,6 +38,11 @@ cfg_if! {
         use std::process;
         use sawtooth_sdk::processor::TransactionProcessor;
         use handler::IdentityTransactionHandler;
+        use opentelemetry::api::{
+            Key, Provider, Sampler, Span,
+            TracerGenerics,
+        };
+        use opentelemetry::{exporter::trace::jaeger, global, sdk};
     }
 }
 
@@ -49,6 +55,21 @@ extern crate protobuf;
 #[cfg(target_arch = "wasm32")]
 fn main() {}
 
+fn init_tracer() {
+    let exporter = jaeger::Exporter::builder()
+        .with_collector_endpoint("127.0.0.1:6831".parse().unwrap())
+        .with_process(jaeger::Process { service_name: "identity", tags: vec![] })
+        .init();
+    let provider = sdk::Provider::builder()
+        .with_exporter(exporter)
+        .with_config(sdk::Config {
+            default_sampler: Sampler::Always,
+            ..Default::default()
+        })
+        .build();
+    global::set_provider(provider);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
     let matches = clap_app!(identity =>
@@ -59,6 +80,8 @@ fn main() {
     )
     .get_matches();
 
+    init_tracer();
+    
     let endpoint = matches
         .value_of("connect")
         .unwrap_or("tcp://localhost:4004");
@@ -90,11 +113,17 @@ fn main() {
         Err(_) => process::exit(1),
     }
 
-    let handler = IdentityTransactionHandler::new();
-    let mut processor = TransactionProcessor::new(endpoint);
 
-    info!("Console logging level: {}", console_log_level);
+    global::trace_provider()
+        .get_tracer("identity")
+        .with_span("processor", move |span| {});
 
-    processor.add_handler(&handler);
-    processor.start();
+        let handler = IdentityTransactionHandler::new();
+        let mut processor = TransactionProcessor::new(endpoint);
+
+        info!("Console logging level: {}", console_log_level);
+
+        processor.add_handler(&handler);
+        processor.start();
+    
 }
