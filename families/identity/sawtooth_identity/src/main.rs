@@ -58,7 +58,10 @@ fn main() {}
 fn init_tracer() {
     let exporter = jaeger::Exporter::builder()
         .with_collector_endpoint("127.0.0.1:6831".parse().unwrap())
-        .with_process(jaeger::Process { service_name: "identity", tags: vec![] })
+        .with_process(jaeger::Process {
+            service_name: "identity-tp",
+            tags: vec![Key::new("version").string("1.2.3")],
+        })
         .init();
     let provider = sdk::Provider::builder()
         .with_exporter(exporter)
@@ -72,6 +75,9 @@ fn init_tracer() {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    // Initializing the tracer exporter
+    init_tracer();
+
     let matches = clap_app!(identity =>
         (version: crate_version!())
         (about: "Identity Transaction Processor (Rust)")
@@ -80,8 +86,6 @@ fn main() {
     )
     .get_matches();
 
-    init_tracer();
-    
     let endpoint = matches
         .value_of("connect")
         .unwrap_or("tcp://localhost:4004");
@@ -113,17 +117,17 @@ fn main() {
         Err(_) => process::exit(1),
     }
 
-
     global::trace_provider()
         .get_tracer("identity")
-        .with_span("processor", move |span| {});
+        .with_span("boot", move |span| {
+            span.add_event("Starting TP".to_string());
+        });
 
-        let handler = IdentityTransactionHandler::new();
-        let mut processor = TransactionProcessor::new(endpoint);
+    let handler = IdentityTransactionHandler::new();
+    let mut processor = TransactionProcessor::new(endpoint);
 
-        info!("Console logging level: {}", console_log_level);
+    info!("Console logging level: {}", console_log_level);
 
-        processor.add_handler(&handler);
-        processor.start();
-    
+    processor.add_handler(&handler);
+    processor.start();
 }

@@ -28,6 +28,8 @@ cfg_if! {
         use sawtooth_sdk::messages::processor::TpProcessRequest;
         use sawtooth_sdk::messages::setting::Setting;
         use sawtooth_sdk::processor::handler::{ApplyError, TransactionContext, TransactionHandler};
+        use opentelemetry::api::{Key, Provider, Sampler, Span, TracerGenerics};
+        use opentelemetry::{exporter::trace::jaeger, global, sdk};
     }
 }
 
@@ -145,10 +147,15 @@ impl TransactionHandler for IdentityTransactionHandler {
         let payload: IdentityPayload = unpack_data(transaction.get_payload())?;
         let mut state = IdentityState::new(context);
         let data = payload.get_data();
+        let tracer = global::trace_provider().get_tracer("identity");
 
         match payload.get_field_type() {
-            IdentityPayload_IdentityType::ROLE => set_role(&data, &mut state),
-            IdentityPayload_IdentityType::POLICY => set_policy(&data, &mut state),
+            IdentityPayload_IdentityType::ROLE => {
+                tracer.with_span("role", move |span| set_role(&data, &mut state))
+            }
+            IdentityPayload_IdentityType::POLICY => {
+                tracer.with_span("create-policy", move |span| set_policy(&data, &mut state))
+            }
             IdentityPayload_IdentityType::IDENTITY_TYPE_UNSET => {
                 Err(ApplyError::InvalidTransaction(String::from(
                     "The IdentityType must be either a ROLE or a POLICY",
@@ -187,6 +194,8 @@ fn set_policy(data: &[u8], state: &mut IdentityState) -> Result<(), ApplyError> 
             "The name must be set in a policy.",
         )));
     }
+
+    let mut key = "";
     // check entries in the policy
     for entry in new_policy.get_entries().iter() {
         if entry.get_key().is_empty() {
@@ -194,7 +203,16 @@ fn set_policy(data: &[u8], state: &mut IdentityState) -> Result<(), ApplyError> 
                 "Every policy entry must have a key.",
             )));
         }
+        key = entry.get_key();
     }
+
+    let policy_name = new_policy.get_name().to_string();
+    let tracer = global::trace_provider().get_tracer("identity");
+
+    tracer.with_span("policy", move |_span| {
+        _span.set_attribute(Key::new("name").string(policy_name));
+        _span.set_attribute(Key::new("key").string(key));
+    });
 
     state.set_policy(new_policy)
 }
@@ -202,6 +220,9 @@ fn set_policy(data: &[u8], state: &mut IdentityState) -> Result<(), ApplyError> 
 fn set_role(data: &[u8], state: &mut IdentityState) -> Result<(), ApplyError> {
     let role: Role = unpack_data(data)?;
 
+    global::trace_provider()
+        .get_tracer("identity")
+        .with_span("role", move |span| {});
     if role.get_policy_name().is_empty() {
         return Err(ApplyError::InvalidTransaction(String::from(
             "A role must contain a policy name.",
