@@ -151,7 +151,7 @@ impl TransactionHandler for IdentityTransactionHandler {
 
         match payload.get_field_type() {
             IdentityPayload_IdentityType::ROLE => {
-                tracer.with_span("role", move |span| set_role(&data, &mut state))
+                tracer.with_span("create-role", move |span| set_role(&data, &mut state))
             }
             IdentityPayload_IdentityType::POLICY => {
                 tracer.with_span("create-policy", move |span| set_policy(&data, &mut state))
@@ -219,10 +219,6 @@ fn set_policy(data: &[u8], state: &mut IdentityState) -> Result<(), ApplyError> 
 
 fn set_role(data: &[u8], state: &mut IdentityState) -> Result<(), ApplyError> {
     let role: Role = unpack_data(data)?;
-
-    global::trace_provider()
-        .get_tracer("identity")
-        .with_span("role", move |span| {});
     if role.get_policy_name().is_empty() {
         return Err(ApplyError::InvalidTransaction(String::from(
             "A role must contain a policy name.",
@@ -256,6 +252,15 @@ fn set_role(data: &[u8], state: &mut IdentityState) -> Result<(), ApplyError> {
             role.get_policy_name()
         )));
     }
+
+    let policy_name = role.get_policy_name().to_string();
+    let role_name = role.get_name().to_string();
+    let tracer = global::trace_provider().get_tracer("identity");
+
+    tracer.with_span("role", move |_span| {
+        _span.set_attribute(Key::new("policy_name").string(policy_name));
+        _span.set_attribute(Key::new("role_name").string(role_name));
+    });
 
     state.set_role(role)
 }
